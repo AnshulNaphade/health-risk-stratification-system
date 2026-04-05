@@ -6,7 +6,14 @@ import { generateGuidance } from '../../engine/guidanceEngine.js'
 import { createAssessment } from '../../repository/assessment.repository.js'
 import { env } from '../../config/env.js'
 
-// Call the Python ML microservice
+// Maps ML predicted risk level to a numeric score for blending
+const LEVEL_TO_SCORE = {
+  LOW:      0.15,
+  MODERATE: 0.48,
+  HIGH:     0.70,
+  CRITICAL: 0.90,
+}
+
 const callMLService = async (symptoms) => {
   try {
     const response = await fetch(`${env.mlServiceUrl}/predict`, {
@@ -14,65 +21,64 @@ const callMLService = async (symptoms) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ symptoms }),
     })
-
     if (!response.ok) return null
     return await response.json()
   } catch {
-    // ML service unavailable — degrade gracefully, don't crash
     console.warn('[ML Service] Unavailable, skipping ML score')
     return null
   }
 }
 
-// Blend rule-based score with ML score
-const blendScores = (ruleScore, mlScore) => {
-  if (mlScore === null) return ruleScore
-  // 60% rule-based (explainable) + 40% ML (adaptive)
-  return parseFloat((ruleScore * 0.6 + mlScore * 0.4).toFixed(3))
-}
-
 export const runAssessment = async (userId, rawSymptoms) => {
-  // Step 1 — Run rule-based engine
+  // Step 1 — Rule-based engine
   const normalized = normalizeSymptoms(rawSymptoms)
   const { riskScore: ruleScore, riskLevel: ruleLevel } = computeRiskScore(normalized)
   const confidenceScore = computeConfidence(rawSymptoms, normalized)
 
-  // Step 2 — Call ML service in parallel (don't await yet)
-  const mlPromise = callMLService(rawSymptoms)
+  // Step 2 — Call ML service
+  const mlResult = await callMLService(rawSymptoms)
 
-  // Step 3 — Generate explanation and guidance (can happen while ML runs)
-  const explanation = generateExplanation(normalized, ruleScore, ruleLevel)
-  const guidance = generateGuidance(normalized, ruleLevel)
+  // Step 3 — Extract ML predicted level and convert to numeric score
+  // mlResult.riskLevel is the predicted class e.g. "LOW"
+  // mlResult.mlScore is the confidence of that prediction e.g. 0.90
+  // We use the predicted level mapped to a score, NOT the raw probability
+  const mlPredictedLevel = mlResult?.riskLevel ?? null
+  const mlNumericScore   = mlPredictedLevel ? LEVEL_TO_SCORE[mlPredictedLevel] : null
 
-  // Step 4 — Wait for ML result
-  const mlResult = await mlPromise
-  const mlScore = mlResult?.mlScore ?? null
-  const finalScore = blendScores(ruleScore, mlScore)
+  // Step 4 — Blend: 60% rule-based + 40% ML numeric score
+  const blendedScore = mlNumericScore !== null
+    ? parseFloat((ruleScore * 0.6 + mlNumericScore * 0.4).toFixed(3))
+    : ruleScore
 
   // Step 5 — Final risk level from blended score
-  const finalLevel = finalScore >= 0.80 ? 'CRITICAL'
-    : finalScore >= 0.60 ? 'HIGH'
-    : finalScore >= 0.35 ? 'MODERATE'
+  const finalLevel = blendedScore >= 0.80 ? 'CRITICAL'
+    : blendedScore >= 0.60 ? 'HIGH'
+    : blendedScore >= 0.35 ? 'MODERATE'
     : 'LOW'
 
-  // Step 6 — Persist
+  // Step 6 — Generate explanation and guidance
+  const explanation = generateExplanation(normalized, ruleScore, finalLevel)
+  const guidance    = generateGuidance(normalized, finalLevel)
+
+  // Step 7 — Persist
   const assessment = await createAssessment({
     userId,
     symptoms:        rawSymptoms,
     riskLevel:       finalLevel,
-    riskScore:       finalScore,
+    riskScore:       blendedScore,
     confidenceScore,
     explanation,
     guidance,
-    mlScore,
+    mlScore:         mlNumericScore,
   })
 
   return {
     ...assessment,
     breakdown: {
-      ruleBasedScore: ruleScore,
-      mlScore:        mlScore ?? 'unavailable',
-      blendedScore:   finalScore,
+      ruleBasedScore:  ruleScore,
+      mlPredicted:     mlPredictedLevel ?? 'unavailable',
+      mlScore:         mlNumericScore   ?? 'unavailable',
+      blendedScore,
       mlProbabilities: mlResult?.probabilities ?? null,
     },
   }

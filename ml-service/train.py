@@ -17,31 +17,33 @@ SYMPTOM_WEIGHTS = {
     "shortness of breath":  0.9,
     "high fever":           0.8,
     "severe headache":      0.7,
-    "dizziness":            0.6,
-    "persistent cough":     0.6,
-    "fatigue":              0.4,
-    "nausea":               0.4,
-    "sore throat":          0.3,
-    "runny nose":           0.2,
-    "mild headache":        0.2,
-    "body ache":            0.3,
-    "loss of appetite":     0.3,
-    "vomiting":             0.5,
     "abdominal pain":       0.6,
+    "dizziness":            0.6,
+    "persistent cough":     0.5,
+    "vomiting":             0.5,
+    "fatigue":              0.3,
+    "nausea":               0.3,
+    "body ache":            0.25,
+    "loss of appetite":     0.25,
+    "sore throat":          0.2,
+    "mild headache":        0.15,
+    "runny nose":           0.1,
 }
 
 def get_risk_label(symptom_vector):
-    weights = [
-        SYMPTOM_WEIGHTS[SYMPTOMS[i]] * symptom_vector[i]
+    active_weights = [
+        SYMPTOM_WEIGHTS[SYMPTOMS[i]]
         for i in range(len(SYMPTOMS))
+        if symptom_vector[i] == 1
     ]
-    active = [w for w in weights if w > 0]
-    if not active:
+
+    if not active_weights:
         return 0  # LOW
 
-    avg = sum(active) / len(active)
-    multiplier = min(1 + (len(active) - 1) * 0.05, 1.3)
-    score = min(avg * multiplier, 1.0)
+    avg = sum(active_weights) / len(active_weights)
+
+    count_bonus = (len(active_weights) - 4) * 0.02 if len(active_weights) > 4 else 0
+    score = min(avg + count_bonus, 1.0)
 
     if score < 0.35:  return 0  # LOW
     if score < 0.60:  return 1  # MODERATE

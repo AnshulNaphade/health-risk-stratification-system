@@ -1,5 +1,3 @@
-// Computes a risk score (0.0 - 1.0) and risk level from normalized symptoms
-
 const RISK_THRESHOLDS = {
   LOW:      { min: 0.0,  max: 0.35 },
   MODERATE: { min: 0.35, max: 0.60 },
@@ -12,18 +10,21 @@ export const computeRiskScore = (normalizedSymptoms) => {
     return { riskScore: 0, riskLevel: 'LOW' }
   }
 
-  // Weighted average — higher weight symptoms pull score up more
-  const totalWeight = normalizedSymptoms.reduce((sum, s) => sum + s.weight, 0)
-  const maxPossibleWeight = normalizedSymptoms.length * 1.0
-  const rawScore = totalWeight / maxPossibleWeight
+  const totalWeight    = normalizedSymptoms.reduce((sum, s) => sum + s.weight, 0)
+  const averageWeight  = totalWeight / normalizedSymptoms.length
 
-  // Symptom count multiplier — more symptoms = higher concern
-  const countMultiplier = Math.min(1 + (normalizedSymptoms.length - 1) * 0.05, 1.3)
-  const finalScore = Math.min(rawScore * countMultiplier, 1.0)
+  // Only apply a small multiplier for large numbers of symptoms (5+)
+  // Single mild symptoms should never be pushed above LOW
+  const countBonus     = normalizedSymptoms.length > 4
+    ? (normalizedSymptoms.length - 4) * 0.02
+    : 0
 
-  const riskLevel = Object.entries(RISK_THRESHOLDS).find(
-    ([, range]) => finalScore >= range.min && finalScore <= range.max
-  )?.[0] ?? 'MODERATE'
+  const finalScore = Math.min(averageWeight + countBonus, 1.0)
+
+  const riskLevel = finalScore >= 0.80 ? 'CRITICAL'
+    : finalScore >= 0.60 ? 'HIGH'
+    : finalScore >= 0.35 ? 'MODERATE'
+    : 'LOW'
 
   return {
     riskScore: parseFloat(finalScore.toFixed(3)),
