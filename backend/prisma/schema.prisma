@@ -1,0 +1,43 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  passwordHash String       @map("password_hash")
+  name         String?
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  assessments  Assessment[]
+
+  @@map("users")
+}
+
+model Assessment {
+  id              String     @id @default(uuid())
+  userId          String     @map("user_id")
+  symptoms        String[]
+  riskLevel       RiskLevel  @map("risk_level")
+  riskScore       Float      @map("risk_score")
+  confidenceScore Float      @map("confidence_score")
+  explanation     String
+  guidance        String
+  mlScore         Float?     @map("ml_score")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("assessments")
+}
+
+enum RiskLevel {
+  LOW
+  MODERATE
+  HIGH
+  CRITICAL
+}
